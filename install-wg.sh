@@ -2,7 +2,35 @@
 # Created by Yevgeniy Goncharov, https://sys-adm.in
 #
 
+# Envs
+# ---------------------------------------------------\
+PATH=$PATH:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+SCRIPT_PATH=$(cd `dirname "${BASH_SOURCE[0]}"` && pwd)
+
+# Vars
+# ---------------------------------------------------\
 SERVER_IP=$(hostname -I | cut -d' ' -f1)
+WGSERVER_DATA="/etc/wireguard"
+WGSERVER_CONFIG="$WGSERVER_DATA/wg0-server.conf"
+
+WGCONFIG_DATA="$SCRIPT_PATH/wg-data"
+WGCLIENT_CONFIG="$WGCONFIG_DATA/wg0-client.conf"
+
+if [[ -d $WGCONFIG_DATA ]]; then
+  echo "Folder $WGCONFIG_DATA exist!"
+  rm -rf $WGCONFIG_DATA
+  mkdir $WGCONFIG_DATA
+else
+  mkdir $WGCONFIG_DATA
+fi
+
+if [[ -d $WGSERVER_DATA ]]; then
+  echo "Folder $WGSERVER_DATA exist!"
+  rm -rf $WGSERVER_DATA
+  mkdir $WGSERVER_DATA
+else
+  mkdir $WGSERVER_DATA
+fi
 
 # Install WG
 curl -Lo /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo
@@ -18,24 +46,25 @@ firewall-cmd --reload
 sysctl -w net.ipv4.conf.all.forwarding=1
 sysctl -w net.ipv6.conf.all.forwarding=1
 
-echo -e "net.ipv4.conf.all.forwarding=1\nnet.ipv6.conf.all.forwarding" > /etc/sysctl.d/99-wireguard.conf
+cat > /etc/sysctl.d/99-wireguard.conf <<_EOF_
+net.ipv4.conf.all.forwarding=1
+net.ipv6.conf.all.forwarding
+_EOF_
 
 # Configure Server & Client
-mkdir /etc/wireguard && cd /etc/wireguard && bash -c 'umask 077; touch wg0-server.conf'
+private_server_key=$(wg genkey)
+private_client_key=$(wg genkey)
 
-wg genkey > /etc/wireguard/private-server.key
-private_server_key=$(cat /etc/wireguard/private-server.key)
+public_server_key=$(echo $private_server_key | wg pubkey)
+public_client_key=$(echo $private_client_key | wg pubkey)
 
-wg pubkey < /etc/wireguard/private-server.key > public-server.key
-public_server_key=$(cat /etc/wireguard/public-server.key)
+echo $private_server_key $public_server_key
+echo $private_client_key $public_client_key
 
-wg genkey > /etc/wireguard/private-client.key
-private_client_key=$(cat /etc/wireguard/private-client.key)
+touch $WGSERVER_CONFIG
+umask 077 $WGSERVER_CONFIG
 
-wg pubkey < /etc/wireguard/private-client.key > public-client.key
-public_client_key=$(/etc/wireguard/public-client.key)
-
-cat > /etc/wireguard/wg0-server.conf <<_EOF_
+cat > $WGSERVER_CONFIG <<_EOF_
 [Interface]
 Address = 10.0.0.1/24
 ListenPort = 36666
@@ -46,7 +75,7 @@ PublicKey = ${public_client_key}
 AllowedIPs = 10.0.0.2/32
 _EOF_
 
-cat > /etc/wireguard/wg0-client.conf <<_EOF_
+cat > $WGCLIENT_CONFIG <<_EOF_
 [Interface]
 Address = 10.0.0.2/24
 PrivateKey = ${private_client_key}
@@ -58,7 +87,7 @@ Endpoint = ${SERVER_IP}:36666
 PersistentKeepalive = 15
 _EOF_
 
-chmod 600 client.conf && chmod 600 wg0-server.conf
-systemctl enable wg-quick@wg0-server && systemctl start wg-quick@wg0-server
+chmod 600 $WGSERVER_CONFIG
+systemctl enable wg-quick@wg0-server && systemctl restart wg-quick@wg0-server
 
-qrencode -t ansiutf8 < wg0_client.conf
+qrencode -t ansiutf8 < $WGCLIENT_CONFIG
